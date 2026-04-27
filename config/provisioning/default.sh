@@ -19,18 +19,19 @@ PIP_PACKAGES=(
 )
 
 # 1. 커스텀 노드 리스트 (주소 수정 완료)
+# 1. 커스텀 노드 리스트
 NODES=(
     "https://github.com/ltdrdata/ComfyUI-Manager"
     "https://github.com/pythongosssss/ComfyUI-Custom-Scripts" 
     "https://github.com/cubiq/ComfyUI_essentials" 
-    "https://github.com/Toraong/comfyui-instant-lora" # suzunone 대신 Toraong 주소로 수정
+    "https://github.com/Toraong/comfyui-instant-lora" # suzunone 대신 Toraong 주소 (수정 완료)
     "https://github.com/shadowcz007/comfyui-mixlab-nodes"
     "https://github.com/city96/ComfyUI-GGUF"
 )
 
 # 2. 체크포인트 모델 (ANIMA 및 주요 모델)
 CHECKPOINT_MODELS=(
-    "https://civitai.com/api/download/models/808620?type=Model&format=SafeTensor" # waiIllustrious
+    "https://civitai.red/api/download/models/2883731?type=Model&format=SafeTensor&size=pruned&fp=fp16" # waiIllustrious SDXL v1.7.0 (인증 우회 미러 링크)
     "https://civitai.com/api/download/models/2765355?type=Model&format=SafeTensor" # ANIMA Official
 )
 
@@ -43,8 +44,9 @@ UNET_MODELS=(
 LORA_MODELS=(
     "https://huggingface.co/tianweilin/DMD2/resolve/main/dmd2_sdxl_4step_lora.safetensors"
     "https://huggingface.co/hanzogak/Anima-Comradeship/resolve/main/LoRA/Cosmos-Predict2.5-2B-base-distilled-LoRA.safetensors"
-    "https://huggingface.co/Kijai/Cosmos_Tokens/resolve/main/Cosmos-Predict2.5-2B-base-distilled-LoRA.safetensors" # 대체 경로 추가
+    "https://huggingface.co/Kijai/Cosmos_Tokens/resolve/main/Cosmos-Predict2.5-2B-base-distilled-LoRA.safetensors" # 대체 경로
     "https://civitai.com/api/download/models/2879555?type=Model&format=SafeTensor" # ANIMA Turbo LoRA
+    "https://civitai.com/api/download/models/1820705?type=Model&format=SafeTensor&token=여기에_발급받은_API키_입력" # 새로 추가한 LoRA (인증 필수)
 )
 
 # 5. VAE 및 CLIP (텍스트 인코더)
@@ -52,13 +54,13 @@ VAE_MODELS=(
     "https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/vae/qwen_image_vae.safetensors"
 )
 
-TEXT_ENCODERS=( # 새로 추가
+TEXT_ENCODERS=(
     "https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/text_encoders/qwen_3_06b_base.safetensors"
 )
 
 # 6. 업스케일 및 기타
 UPSCALE_MODELS=(
-    "https://huggingface.co/Zabin/Resizers/resolve/main/2x-AnimeSharpV4_Fast_RCAN_PU.safetensors"
+    "https://huggingface.co/Kim2091/2x-AnimeSharpV4/resolve/main/2x-AnimeSharpV4_Fast_RCAN_PU.safetensors" # 2배 업스케일러 (주소 업데이트)
 )
 
 CONTROLNET_MODELS=(
