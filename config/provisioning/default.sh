@@ -41,7 +41,7 @@ LORA_MODELS=(
     "https://huggingface.co/hanzogak/Anima-Comradeship/resolve/main/LoRA/Cosmos-Predict2.5-2B-base-distilled-LoRA.safetensors"
     "https://huggingface.co/Kijai/Cosmos_Tokens/resolve/main/Cosmos-Predict2.5-2B-base-distilled-LoRA.safetensors"
     "https://civitai.com/api/download/models/2879555?type=Model&format=SafeTensor"
-    "https://civitai.com/api/download/models/1820705?type=Model&format=SafeTensor&token=여기에_발급받은_API키_입력"
+    "https://civitai.com/api/download/models/1820705?type=Model&format=SafeTensor"
 )
 
 VAE_MODELS=(
