@@ -2,8 +2,11 @@
 
 # This file will be sourced in init.sh
 # Anima Preview3 + ComfyUI workflow provisioning script
+# Target image: vastai/comfy:cuda-12.9-auto
 
 #DEFAULT_WORKFLOW="https://..."
+
+set +e
 
 APT_PACKAGES=(
     #"package-1"
@@ -77,12 +80,7 @@ CONTROLNET_MODELS=(
 ### DO NOT EDIT BELOW HERE UNLESS YOU KNOW WHAT YOU ARE DOING ###
 
 function provisioning_start() {
-    if [[ ! -d /opt/environments/python ]]; then
-        export MAMBA_BASE=true
-    fi
-
-    source /opt/ai-dock/etc/environment.sh
-    source /opt/ai-dock/bin/venv-set.sh comfyui
+    provisioning_setup_environment
 
     provisioning_print_header
     provisioning_get_apt_packages
@@ -130,26 +128,52 @@ function provisioning_start() {
         "${ULTRALYTICS_SEGM_MODELS[@]}"
 
     provisioning_fix_filenames_and_paths
+    provisioning_get_default_workflow
     provisioning_print_end
+
+    # Vast comfy image keeps ComfyUI paused while /.provisioning exists.
+    rm -f /.provisioning 2>/dev/null || true
+}
+
+function provisioning_setup_environment() {
+    export WORKSPACE="${WORKSPACE:-/workspace}"
+
+    cd "$WORKSPACE" || cd /
+
+    # vastai/comfy uses /venv/main, not ai-dock/micromamba.
+    if [[ -f /venv/main/bin/activate ]]; then
+        source /venv/main/bin/activate
+        printf "Activated Python environment: /venv/main\n"
+    else
+        printf "WARNING: /venv/main/bin/activate not found. Falling back to system python.\n"
+    fi
+
+    export PYTHON_BIN="${PYTHON_BIN:-python}"
+    export PIP_BIN="${PIP_BIN:-python -m pip}"
+
+    mkdir -p /opt/ComfyUI/custom_nodes
+    mkdir -p "${WORKSPACE}/storage/stable_diffusion/models"
 }
 
 function pip_install() {
-    if [[ -z $MAMBA_BASE ]]; then
-        "$COMFYUI_VENV_PIP" install --no-cache-dir "$@"
-    else
-        micromamba run -n comfyui pip install --no-cache-dir "$@"
-    fi
+    python -m pip install --no-cache-dir "$@"
 }
 
 function provisioning_get_apt_packages() {
-    if [[ -n $APT_PACKAGES ]]; then
-        sudo $APT_INSTALL ${APT_PACKAGES[@]}
+    if [[ ${#APT_PACKAGES[@]} -gt 0 ]]; then
+        if command -v sudo >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y "${APT_PACKAGES[@]}"
+        else
+            apt-get update
+            apt-get install -y "${APT_PACKAGES[@]}"
+        fi
     fi
 }
 
 function provisioning_get_pip_packages() {
-    if [[ -n $PIP_PACKAGES ]]; then
-        pip_install ${PIP_PACKAGES[@]}
+    if [[ ${#PIP_PACKAGES[@]} -gt 0 ]]; then
+        pip_install "${PIP_PACKAGES[@]}"
     fi
 }
 
@@ -160,29 +184,27 @@ function provisioning_get_nodes() {
         path="/opt/ComfyUI/custom_nodes/${dir}"
         requirements="${path}/requirements.txt"
 
-        if [[ -d $path ]]; then
+        if [[ -d "$path" ]]; then
             if [[ ${AUTO_UPDATE,,} != "false" ]]; then
                 printf "Updating node: %s...\n" "${repo}"
-                ( cd "$path" && git pull )
-                if [[ -e $requirements ]]; then
-                    pip_install -r "$requirements"
+                ( cd "$path" && git pull --ff-only ) || true
+
+                if [[ -e "$requirements" ]]; then
+                    pip_install -r "$requirements" || true
                 fi
             fi
         else
             printf "Downloading node: %s...\n" "${repo}"
-            git clone "${repo}" "${path}" --recursive
-            if [[ -e $requirements ]]; then
-                pip_install -r "${requirements}"
+            git clone "${repo}" "${path}" --recursive || true
+
+            if [[ -e "$requirements" ]]; then
+                pip_install -r "$requirements" || true
             fi
         fi
 
         if [[ -e "${path}/install.py" ]]; then
             printf "Running install.py for node: %s...\n" "${repo}"
-            if [[ -z $MAMBA_BASE ]]; then
-                "$COMFYUI_VENV_PYTHON" "${path}/install.py" || true
-            else
-                micromamba run -n comfyui python "${path}/install.py" || true
-            fi
+            python "${path}/install.py" || true
         fi
     done
 }
@@ -197,7 +219,7 @@ function provisioning_get_default_workflow() {
 }
 
 function provisioning_get_models() {
-    if [[ -z $2 ]]; then return 1; fi
+    if [[ -z $2 ]]; then return 0; fi
 
     dir="$1"
     mkdir -p "$dir"
@@ -218,6 +240,7 @@ function provisioning_fix_filenames_and_paths() {
 
     model_root="${WORKSPACE}/storage/stable_diffusion/models"
 
+    checkpoints_dir="${model_root}/checkpoints"
     diffusion_dir="${model_root}/diffusion_models"
     lora_dir="${model_root}/lora"
     vae_dir="${model_root}/vae"
@@ -225,12 +248,21 @@ function provisioning_fix_filenames_and_paths() {
     upscale_dir="${model_root}/upscale_models"
     sams_dir="${model_root}/sams"
     ultralytics_dir="${model_root}/ultralytics"
-    checkpoints_dir="${model_root}/checkpoints"
+    controlnet_dir="${model_root}/controlnet"
 
-    mkdir -p "$diffusion_dir" "$lora_dir" "$vae_dir" "$text_encoder_dir" "$upscale_dir" "$sams_dir" "$ultralytics_dir" "$checkpoints_dir"
-    mkdir -p /opt/ComfyUI/models
+    mkdir -p \
+        "$checkpoints_dir" \
+        "$diffusion_dir" \
+        "$lora_dir" \
+        "$vae_dir" \
+        "$text_encoder_dir" \
+        "$upscale_dir" \
+        "$sams_dir" \
+        "$ultralytics_dir" \
+        "$controlnet_dir" \
+        /opt/ComfyUI/models
 
-    # Workflow expects this filename:
+    # Workflow expects:
     # animaOfficial_preview3Base.safetensors
     # Official HF filename:
     # anima-preview3-base.safetensors
@@ -238,40 +270,63 @@ function provisioning_fix_filenames_and_paths() {
         ln -s "${diffusion_dir}/anima-preview3-base.safetensors" "${diffusion_dir}/animaOfficial_preview3Base.safetensors"
     fi
 
-    # Some ComfyUI setups use "loras" instead of "lora".
+    # Some nodes use loras instead of lora.
     if [[ ! -e "${model_root}/loras" ]]; then
         ln -s "$lora_dir" "${model_root}/loras"
     fi
 
     # Expose models under /opt/ComfyUI/models as well.
-    declare -A MODEL_LINKS=(
-        ["checkpoints"]="$checkpoints_dir"
-        ["diffusion_models"]="$diffusion_dir"
-        ["unet"]="$diffusion_dir"
-        ["lora"]="$lora_dir"
-        ["loras"]="$lora_dir"
-        ["vae"]="$vae_dir"
-        ["text_encoders"]="$text_encoder_dir"
-        ["upscale_models"]="$upscale_dir"
-        ["sams"]="$sams_dir"
-        ["ultralytics"]="$ultralytics_dir"
-        ["controlnet"]="${model_root}/controlnet"
-    )
+    provisioning_link_model_dir "$checkpoints_dir" "/opt/ComfyUI/models/checkpoints"
+    provisioning_link_model_dir "$diffusion_dir" "/opt/ComfyUI/models/diffusion_models"
+    provisioning_link_model_dir "$diffusion_dir" "/opt/ComfyUI/models/unet"
+    provisioning_link_model_dir "$lora_dir" "/opt/ComfyUI/models/lora"
+    provisioning_link_model_dir "$lora_dir" "/opt/ComfyUI/models/loras"
+    provisioning_link_model_dir "$vae_dir" "/opt/ComfyUI/models/vae"
+    provisioning_link_model_dir "$text_encoder_dir" "/opt/ComfyUI/models/text_encoders"
+    provisioning_link_model_dir "$upscale_dir" "/opt/ComfyUI/models/upscale_models"
+    provisioning_link_model_dir "$sams_dir" "/opt/ComfyUI/models/sams"
+    provisioning_link_model_dir "$ultralytics_dir" "/opt/ComfyUI/models/ultralytics"
+    provisioning_link_model_dir "$controlnet_dir" "/opt/ComfyUI/models/controlnet"
 
-    for dst_name in "${!MODEL_LINKS[@]}"; do
-        src="${MODEL_LINKS[$dst_name]}"
-        dst="/opt/ComfyUI/models/${dst_name}"
+    # Compatibility aliases used by some ComfyUI images.
+    if [[ ! -e "${model_root}/ckpt" ]]; then
+        ln -s "$checkpoints_dir" "${model_root}/ckpt"
+    fi
 
-        mkdir -p "$src"
+    if [[ ! -e "${model_root}/unet" ]]; then
+        ln -s "$diffusion_dir" "${model_root}/unet"
+    fi
+}
 
-        if [[ ! -e "$dst" ]]; then
-            ln -s "$src" "$dst"
-        fi
-    done
+function provisioning_link_model_dir() {
+    src="$1"
+    dst="$2"
+
+    mkdir -p "$src"
+
+    if [[ -L "$dst" ]]; then
+        return 0
+    fi
+
+    if [[ -d "$dst" && -z "$(ls -A "$dst" 2>/dev/null)" ]]; then
+        rmdir "$dst" 2>/dev/null || true
+    fi
+
+    if [[ ! -e "$dst" ]]; then
+        ln -s "$src" "$dst"
+    fi
 }
 
 function provisioning_print_header() {
-    printf "\n##############################################\n#                                            #\n#          Provisioning container            #\n#                                            #\n#         This will take some time           #\n#                                            #\n# Your container will be ready on completion #\n#                                            #\n##############################################\n\n"
+    printf "\n##############################################\n"
+    printf "#                                            #\n"
+    printf "#          Provisioning container            #\n"
+    printf "#                                            #\n"
+    printf "#         This will take some time           #\n"
+    printf "#                                            #\n"
+    printf "# Your container will be ready on completion #\n"
+    printf "#                                            #\n"
+    printf "##############################################\n\n"
 
     if [[ -n "$DISK_GB_ALLOCATED" && -n "$DISK_GB_REQUIRED" && $DISK_GB_ALLOCATED -lt $DISK_GB_REQUIRED ]]; then
         printf "WARNING: Your allocated disk size (%sGB) is below the recommended %sGB - Some models may not be downloaded\n" "$DISK_GB_ALLOCATED" "$DISK_GB_REQUIRED"
@@ -313,18 +368,33 @@ function provisioning_has_valid_civitai_token() {
 }
 
 function provisioning_download() {
+    url="$1"
+    dir="$2"
     auth_token=""
 
-    if [[ -n $HF_TOKEN && $1 =~ ^https://([a-zA-Z0-9_-]+\.)?huggingface\.co(/|$|\?) ]]; then
+    if [[ -n $HF_TOKEN && $url =~ ^https://([a-zA-Z0-9_-]+\.)?huggingface\.co(/|$|\?) ]]; then
         auth_token="$HF_TOKEN"
-    elif [[ -n $CIVITAI_TOKEN && $1 =~ ^https://([a-zA-Z0-9_-]+\.)?civitai\.com(/|$|\?) ]]; then
+    elif [[ -n $CIVITAI_TOKEN && $url =~ ^https://([a-zA-Z0-9_-]+\.)?civitai\.com(/|$|\?) ]]; then
         auth_token="$CIVITAI_TOKEN"
     fi
 
     if [[ -n $auth_token ]]; then
-        wget --header="Authorization: Bearer $auth_token" -qnc --content-disposition --show-progress -e dotbytes="${3:-4M}" -P "$2" "$1"
+        wget \
+            --header="Authorization: Bearer $auth_token" \
+            -qnc \
+            --content-disposition \
+            --show-progress \
+            -e dotbytes="${3:-4M}" \
+            -P "$dir" \
+            "$url" || true
     else
-        wget -qnc --content-disposition --show-progress -e dotbytes="${3:-4M}" -P "$2" "$1"
+        wget \
+            -qnc \
+            --content-disposition \
+            --show-progress \
+            -e dotbytes="${3:-4M}" \
+            -P "$dir" \
+            "$url" || true
     fi
 }
 
