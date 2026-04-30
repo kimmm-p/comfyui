@@ -181,7 +181,7 @@ function provisioning_get_nodes() {
     for repo in "${NODES[@]}"; do
         dir="${repo##*/}"
         dir="${dir%.git}"
-        path="/opt/ComfyUI/custom_nodes/${dir}"
+        path="/workspace/ComfyUI/custom_nodes/${dir}"
         requirements="${path}/requirements.txt"
 
         if [[ -d "$path" ]]; then
