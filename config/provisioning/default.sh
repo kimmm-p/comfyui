@@ -41,11 +41,10 @@ NODES=(
     "https://github.com/yolain/ComfyUI-Easy-Use"
     "https://github.com/ssitu/ComfyUI_UltimateSDUpscale"
 
-    # Required by this workflow for GLSLShader and CustomCombo.
+    # Required for GLSLShader / CustomCombo compatibility in this workflow.
     "https://github.com/cubiq/ComfyUI_essentials"
 )
 
-# Anima Preview3 workflow is UNET / diffusion_models based, not checkpoint based.
 CHECKPOINT_MODELS=(
 )
 
@@ -99,6 +98,11 @@ function provisioning_start() {
 
     provisioning_print_header
     provisioning_get_apt_packages
+
+    # Important:
+    # GLSLShader / CustomCombo may depend on newer ComfyUI core/frontend.
+    provisioning_update_comfyui_core
+
     provisioning_get_nodes
     provisioning_get_pip_packages
 
@@ -148,12 +152,14 @@ function provisioning_start() {
 
     # Vast comfy image keeps ComfyUI paused while /.provisioning exists.
     rm -f /.provisioning 2>/dev/null || true
+
+    # Restart ComfyUI after provisioning so newly installed nodes/core are loaded.
+    supervisorctl restart comfyui 2>/dev/null || true
 }
 
 function provisioning_setup_environment() {
     cd "$WORKSPACE" || cd /
 
-    # vastai/comfy uses /venv/main, not ai-dock/micromamba.
     if [[ -f /venv/main/bin/activate ]]; then
         source /venv/main/bin/activate
         printf "Activated Python environment: /venv/main\n"
@@ -168,6 +174,9 @@ function provisioning_setup_environment() {
     mkdir -p "$CUSTOM_NODES_DIR"
     mkdir -p "$COMFYUI_MODELS_DIR"
     mkdir -p "$MODEL_STORAGE_DIR"
+
+    export COMFYUI_PATH="$COMFYUI_DIR"
+    export COMFYUI_MODEL_PATH="$COMFYUI_MODELS_DIR"
 
     printf "ComfyUI directory: %s\n" "$COMFYUI_DIR"
     printf "Custom nodes directory: %s\n" "$CUSTOM_NODES_DIR"
@@ -197,6 +206,31 @@ function provisioning_get_pip_packages() {
     fi
 }
 
+function provisioning_update_comfyui_core() {
+    if [[ ! -d "$COMFYUI_DIR" ]]; then
+        printf "ComfyUI directory not found: %s\n" "$COMFYUI_DIR"
+        return 0
+    fi
+
+    if [[ -d "${COMFYUI_DIR}/.git" ]]; then
+        printf "Updating ComfyUI core at %s...\n" "$COMFYUI_DIR"
+
+        (
+            cd "$COMFYUI_DIR" && \
+            git fetch origin && \
+            (git switch master || git switch main || true) && \
+            git pull --ff-only
+        ) || true
+
+        if [[ -f "${COMFYUI_DIR}/requirements.txt" ]]; then
+            printf "Installing ComfyUI core requirements...\n"
+            pip_install -r "${COMFYUI_DIR}/requirements.txt" || true
+        fi
+    else
+        printf "ComfyUI directory is not a git repo, skipping core update: %s\n" "$COMFYUI_DIR"
+    fi
+}
+
 function provisioning_get_nodes() {
     mkdir -p "$CUSTOM_NODES_DIR"
 
@@ -209,7 +243,11 @@ function provisioning_get_nodes() {
         if [[ -d "$path" ]]; then
             if [[ ${AUTO_UPDATE,,} != "false" ]]; then
                 printf "Updating node: %s...\n" "${repo}"
-                ( cd "$path" && git pull --ff-only ) || true
+                (
+                    cd "$path" && \
+                    git fetch origin && \
+                    (git pull --ff-only || true)
+                ) || true
 
                 if [[ -e "$requirements" ]]; then
                     pip_install -r "$requirements" || true
@@ -291,16 +329,14 @@ function provisioning_fix_filenames_and_paths() {
     # animaOfficial_preview3Base.safetensors
     # Official HF filename:
     # anima-preview3-base.safetensors
-    if [[ -f "${diffusion_dir}/anima-preview3-base.safetensors" && ! -e "${diffusion_dir}/animaOfficial_preview3Base.safetensors" ]]; then
-        ln -s "${diffusion_dir}/anima-preview3-base.safetensors" "${diffusion_dir}/animaOfficial_preview3Base.safetensors"
-    fi
+    provisioning_make_anima_alias "$diffusion_dir"
 
     # Some nodes use loras instead of lora.
     if [[ ! -e "${MODEL_STORAGE_DIR}/loras" ]]; then
         ln -s "$lora_dir" "${MODEL_STORAGE_DIR}/loras"
     fi
 
-    # Expose models under the actual ComfyUI model path.
+    # Expose models under actual ComfyUI model path.
     provisioning_sync_model_dir "$checkpoints_dir" "${COMFYUI_MODELS_DIR}/checkpoints"
     provisioning_sync_model_dir "$diffusion_dir" "${COMFYUI_MODELS_DIR}/diffusion_models"
     provisioning_sync_model_dir "$diffusion_dir" "${COMFYUI_MODELS_DIR}/unet"
@@ -334,12 +370,10 @@ function provisioning_sync_model_dir() {
     mkdir -p "$src"
     mkdir -p "$(dirname "$dst")"
 
-    # If destination is a symlink, leave it.
     if [[ -L "$dst" ]]; then
         return 0
     fi
 
-    # If destination does not exist, prefer symlink.
     if [[ ! -e "$dst" ]]; then
         ln -s "$src" "$dst"
         return 0
