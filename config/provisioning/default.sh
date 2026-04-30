@@ -3,10 +3,22 @@
 # This file will be sourced in init.sh
 # Anima Preview3 + ComfyUI workflow provisioning script
 # Target image: vastai/comfy:cuda-12.9-auto
+#
+# Key assumptions:
+# - Actual ComfyUI path: /workspace/ComfyUI
+# - Actual Python env: /venv/main
+# - Model storage: /workspace/storage/stable_diffusion/models
+# - ComfyUI model path: /workspace/ComfyUI/models
 
 #DEFAULT_WORKFLOW="https://..."
 
 set +e
+
+export WORKSPACE="${WORKSPACE:-/workspace}"
+export COMFYUI_DIR="${COMFYUI_DIR:-${WORKSPACE}/ComfyUI}"
+export CUSTOM_NODES_DIR="${CUSTOM_NODES_DIR:-${COMFYUI_DIR}/custom_nodes}"
+export MODEL_STORAGE_DIR="${MODEL_STORAGE_DIR:-${WORKSPACE}/storage/stable_diffusion/models}"
+export COMFYUI_MODELS_DIR="${COMFYUI_MODELS_DIR:-${COMFYUI_DIR}/models}"
 
 APT_PACKAGES=(
     #"package-1"
@@ -28,6 +40,9 @@ NODES=(
     "https://github.com/willmiao/ComfyUI-Lora-Manager"
     "https://github.com/yolain/ComfyUI-Easy-Use"
     "https://github.com/ssitu/ComfyUI_UltimateSDUpscale"
+
+    # Required by this workflow for GLSLShader and CustomCombo.
+    "https://github.com/cubiq/ComfyUI_essentials"
 )
 
 # Anima Preview3 workflow is UNET / diffusion_models based, not checkpoint based.
@@ -88,43 +103,43 @@ function provisioning_start() {
     provisioning_get_pip_packages
 
     provisioning_get_models \
-        "${WORKSPACE}/storage/stable_diffusion/models/checkpoints" \
+        "${MODEL_STORAGE_DIR}/checkpoints" \
         "${CHECKPOINT_MODELS[@]}"
 
     provisioning_get_models \
-        "${WORKSPACE}/storage/stable_diffusion/models/diffusion_models" \
+        "${MODEL_STORAGE_DIR}/diffusion_models" \
         "${DIFFUSION_MODELS[@]}"
 
     provisioning_get_models \
-        "${WORKSPACE}/storage/stable_diffusion/models/lora" \
+        "${MODEL_STORAGE_DIR}/lora" \
         "${LORA_MODELS[@]}"
 
     provisioning_get_models \
-        "${WORKSPACE}/storage/stable_diffusion/models/controlnet" \
+        "${MODEL_STORAGE_DIR}/controlnet" \
         "${CONTROLNET_MODELS[@]}"
 
     provisioning_get_models \
-        "${WORKSPACE}/storage/stable_diffusion/models/vae" \
+        "${MODEL_STORAGE_DIR}/vae" \
         "${VAE_MODELS[@]}"
 
     provisioning_get_models \
-        "${WORKSPACE}/storage/stable_diffusion/models/text_encoders" \
+        "${MODEL_STORAGE_DIR}/text_encoders" \
         "${TEXT_ENCODERS[@]}"
 
     provisioning_get_models \
-        "${WORKSPACE}/storage/stable_diffusion/models/upscale_models" \
+        "${MODEL_STORAGE_DIR}/upscale_models" \
         "${UPSCALE_MODELS[@]}"
 
     provisioning_get_models \
-        "${WORKSPACE}/storage/stable_diffusion/models/sams" \
+        "${MODEL_STORAGE_DIR}/sams" \
         "${SAM_MODELS[@]}"
 
     provisioning_get_models \
-        "${WORKSPACE}/storage/stable_diffusion/models/ultralytics/bbox" \
+        "${MODEL_STORAGE_DIR}/ultralytics/bbox" \
         "${ULTRALYTICS_BBOX_MODELS[@]}"
 
     provisioning_get_models \
-        "${WORKSPACE}/storage/stable_diffusion/models/ultralytics/segm" \
+        "${MODEL_STORAGE_DIR}/ultralytics/segm" \
         "${ULTRALYTICS_SEGM_MODELS[@]}"
 
     provisioning_fix_filenames_and_paths
@@ -136,8 +151,6 @@ function provisioning_start() {
 }
 
 function provisioning_setup_environment() {
-    export WORKSPACE="${WORKSPACE:-/workspace}"
-
     cd "$WORKSPACE" || cd /
 
     # vastai/comfy uses /venv/main, not ai-dock/micromamba.
@@ -151,8 +164,15 @@ function provisioning_setup_environment() {
     export PYTHON_BIN="${PYTHON_BIN:-python}"
     export PIP_BIN="${PIP_BIN:-python -m pip}"
 
-    mkdir -p /opt/ComfyUI/custom_nodes
-    mkdir -p "${WORKSPACE}/storage/stable_diffusion/models"
+    mkdir -p "$COMFYUI_DIR"
+    mkdir -p "$CUSTOM_NODES_DIR"
+    mkdir -p "$COMFYUI_MODELS_DIR"
+    mkdir -p "$MODEL_STORAGE_DIR"
+
+    printf "ComfyUI directory: %s\n" "$COMFYUI_DIR"
+    printf "Custom nodes directory: %s\n" "$CUSTOM_NODES_DIR"
+    printf "Model storage directory: %s\n" "$MODEL_STORAGE_DIR"
+    printf "ComfyUI models directory: %s\n" "$COMFYUI_MODELS_DIR"
 }
 
 function pip_install() {
@@ -178,10 +198,12 @@ function provisioning_get_pip_packages() {
 }
 
 function provisioning_get_nodes() {
+    mkdir -p "$CUSTOM_NODES_DIR"
+
     for repo in "${NODES[@]}"; do
         dir="${repo##*/}"
         dir="${dir%.git}"
-        path="/workspace/ComfyUI/custom_nodes/${dir}"
+        path="${CUSTOM_NODES_DIR}/${dir}"
         requirements="${path}/requirements.txt"
 
         if [[ -d "$path" ]]; then
@@ -204,6 +226,10 @@ function provisioning_get_nodes() {
 
         if [[ -e "${path}/install.py" ]]; then
             printf "Running install.py for node: %s...\n" "${repo}"
+
+            export COMFYUI_PATH="$COMFYUI_DIR"
+            export COMFYUI_MODEL_PATH="$COMFYUI_MODELS_DIR"
+
             python "${path}/install.py" || true
         fi
     done
@@ -213,7 +239,8 @@ function provisioning_get_default_workflow() {
     if [[ -n $DEFAULT_WORKFLOW ]]; then
         workflow_json=$(curl -s "$DEFAULT_WORKFLOW")
         if [[ -n $workflow_json ]]; then
-            echo "export const defaultGraph = $workflow_json;" > /opt/ComfyUI/web/scripts/defaultGraph.js
+            mkdir -p "${COMFYUI_DIR}/web/scripts"
+            echo "export const defaultGraph = $workflow_json;" > "${COMFYUI_DIR}/web/scripts/defaultGraph.js"
         fi
     fi
 }
@@ -238,17 +265,15 @@ function provisioning_get_models() {
 function provisioning_fix_filenames_and_paths() {
     printf "Fixing filenames and model paths...\n"
 
-    model_root="${WORKSPACE}/storage/stable_diffusion/models"
-
-    checkpoints_dir="${model_root}/checkpoints"
-    diffusion_dir="${model_root}/diffusion_models"
-    lora_dir="${model_root}/lora"
-    vae_dir="${model_root}/vae"
-    text_encoder_dir="${model_root}/text_encoders"
-    upscale_dir="${model_root}/upscale_models"
-    sams_dir="${model_root}/sams"
-    ultralytics_dir="${model_root}/ultralytics"
-    controlnet_dir="${model_root}/controlnet"
+    checkpoints_dir="${MODEL_STORAGE_DIR}/checkpoints"
+    diffusion_dir="${MODEL_STORAGE_DIR}/diffusion_models"
+    lora_dir="${MODEL_STORAGE_DIR}/lora"
+    vae_dir="${MODEL_STORAGE_DIR}/vae"
+    text_encoder_dir="${MODEL_STORAGE_DIR}/text_encoders"
+    upscale_dir="${MODEL_STORAGE_DIR}/upscale_models"
+    sams_dir="${MODEL_STORAGE_DIR}/sams"
+    ultralytics_dir="${MODEL_STORAGE_DIR}/ultralytics"
+    controlnet_dir="${MODEL_STORAGE_DIR}/controlnet"
 
     mkdir -p \
         "$checkpoints_dir" \
@@ -260,7 +285,7 @@ function provisioning_fix_filenames_and_paths() {
         "$sams_dir" \
         "$ultralytics_dir" \
         "$controlnet_dir" \
-        /opt/ComfyUI/models
+        "$COMFYUI_MODELS_DIR"
 
     # Workflow expects:
     # animaOfficial_preview3Base.safetensors
@@ -271,49 +296,69 @@ function provisioning_fix_filenames_and_paths() {
     fi
 
     # Some nodes use loras instead of lora.
-    if [[ ! -e "${model_root}/loras" ]]; then
-        ln -s "$lora_dir" "${model_root}/loras"
+    if [[ ! -e "${MODEL_STORAGE_DIR}/loras" ]]; then
+        ln -s "$lora_dir" "${MODEL_STORAGE_DIR}/loras"
     fi
 
-    # Expose models under /opt/ComfyUI/models as well.
-    provisioning_link_model_dir "$checkpoints_dir" "/opt/ComfyUI/models/checkpoints"
-    provisioning_link_model_dir "$diffusion_dir" "/opt/ComfyUI/models/diffusion_models"
-    provisioning_link_model_dir "$diffusion_dir" "/opt/ComfyUI/models/unet"
-    provisioning_link_model_dir "$lora_dir" "/opt/ComfyUI/models/lora"
-    provisioning_link_model_dir "$lora_dir" "/opt/ComfyUI/models/loras"
-    provisioning_link_model_dir "$vae_dir" "/opt/ComfyUI/models/vae"
-    provisioning_link_model_dir "$text_encoder_dir" "/opt/ComfyUI/models/text_encoders"
-    provisioning_link_model_dir "$upscale_dir" "/opt/ComfyUI/models/upscale_models"
-    provisioning_link_model_dir "$sams_dir" "/opt/ComfyUI/models/sams"
-    provisioning_link_model_dir "$ultralytics_dir" "/opt/ComfyUI/models/ultralytics"
-    provisioning_link_model_dir "$controlnet_dir" "/opt/ComfyUI/models/controlnet"
+    # Expose models under the actual ComfyUI model path.
+    provisioning_sync_model_dir "$checkpoints_dir" "${COMFYUI_MODELS_DIR}/checkpoints"
+    provisioning_sync_model_dir "$diffusion_dir" "${COMFYUI_MODELS_DIR}/diffusion_models"
+    provisioning_sync_model_dir "$diffusion_dir" "${COMFYUI_MODELS_DIR}/unet"
+    provisioning_sync_model_dir "$lora_dir" "${COMFYUI_MODELS_DIR}/lora"
+    provisioning_sync_model_dir "$lora_dir" "${COMFYUI_MODELS_DIR}/loras"
+    provisioning_sync_model_dir "$vae_dir" "${COMFYUI_MODELS_DIR}/vae"
+    provisioning_sync_model_dir "$text_encoder_dir" "${COMFYUI_MODELS_DIR}/text_encoders"
+    provisioning_sync_model_dir "$upscale_dir" "${COMFYUI_MODELS_DIR}/upscale_models"
+    provisioning_sync_model_dir "$sams_dir" "${COMFYUI_MODELS_DIR}/sams"
+    provisioning_sync_model_dir "$ultralytics_dir" "${COMFYUI_MODELS_DIR}/ultralytics"
+    provisioning_sync_model_dir "$controlnet_dir" "${COMFYUI_MODELS_DIR}/controlnet"
 
     # Compatibility aliases used by some ComfyUI images.
-    if [[ ! -e "${model_root}/ckpt" ]]; then
-        ln -s "$checkpoints_dir" "${model_root}/ckpt"
+    if [[ ! -e "${MODEL_STORAGE_DIR}/ckpt" ]]; then
+        ln -s "$checkpoints_dir" "${MODEL_STORAGE_DIR}/ckpt"
     fi
 
-    if [[ ! -e "${model_root}/unet" ]]; then
-        ln -s "$diffusion_dir" "${model_root}/unet"
+    if [[ ! -e "${MODEL_STORAGE_DIR}/unet" ]]; then
+        ln -s "$diffusion_dir" "${MODEL_STORAGE_DIR}/unet"
     fi
+
+    # Guarantee Anima alias inside ComfyUI-visible paths too.
+    provisioning_make_anima_alias "${COMFYUI_MODELS_DIR}/diffusion_models"
+    provisioning_make_anima_alias "${COMFYUI_MODELS_DIR}/unet"
 }
 
-function provisioning_link_model_dir() {
+function provisioning_sync_model_dir() {
     src="$1"
     dst="$2"
 
     mkdir -p "$src"
+    mkdir -p "$(dirname "$dst")"
 
+    # If destination is a symlink, leave it.
     if [[ -L "$dst" ]]; then
         return 0
     fi
 
-    if [[ -d "$dst" && -z "$(ls -A "$dst" 2>/dev/null)" ]]; then
-        rmdir "$dst" 2>/dev/null || true
-    fi
-
+    # If destination does not exist, prefer symlink.
     if [[ ! -e "$dst" ]]; then
         ln -s "$src" "$dst"
+        return 0
+    fi
+
+    # If destination already exists as a real directory, copy files into it.
+    # This avoids the issue where ln -sfn creates nested links inside existing dirs.
+    if [[ -d "$dst" ]]; then
+        rsync -a "$src"/ "$dst"/ || true
+        return 0
+    fi
+}
+
+function provisioning_make_anima_alias() {
+    dir="$1"
+    mkdir -p "$dir"
+
+    if [[ -f "${dir}/anima-preview3-base.safetensors" && ! -e "${dir}/animaOfficial_preview3Base.safetensors" ]]; then
+        ln -s "${dir}/anima-preview3-base.safetensors" "${dir}/animaOfficial_preview3Base.safetensors"
     fi
 }
 
