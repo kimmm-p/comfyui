@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # This file will be sourced in init.sh
-# https://raw.githubusercontent.com/ai-dock/comfyui/main/config/provisioning/default.sh
+# Anima Preview3 + ComfyUI workflow provisioning script
 
 #DEFAULT_WORKFLOW="https://..."
 
@@ -16,35 +16,27 @@ PIP_PACKAGES=(
 )
 
 NODES=(
-    "https://github.com/ltdrdata/ComfyUI-Manager"
-    "https://github.com/pythongosssss/ComfyUI-Custom-Scripts"
-    "https://github.com/cubiq/ComfyUI_essentials"
-
-    # Workflow required / strongly related
+    "https://github.com/Comfy-Org/ComfyUI-Manager"
     "https://github.com/ltdrdata/ComfyUI-Impact-Pack"
     "https://github.com/ltdrdata/ComfyUI-Impact-Subpack"
     "https://github.com/rgthree/rgthree-comfy"
-    "https://github.com/yolain/ComfyUI-Easy-Use"
-    "https://github.com/kijai/ComfyUI-KJNodes"
     "https://github.com/alexopus/ComfyUI-Image-Saver"
-    "https://github.com/zanllp/ComfyUI-LoraManager"
-
-    # Optional / existing
-    "https://github.com/Toraong/comfyui-instant-lora"
-    "https://github.com/shadowcz007/comfyui-mixlab-nodes"
-    "https://github.com/city96/ComfyUI-GGUF"
+    "https://github.com/kijai/ComfyUI-KJNodes"
+    "https://github.com/willmiao/ComfyUI-Lora-Manager"
+    "https://github.com/yolain/ComfyUI-Easy-Use"
+    "https://github.com/ssitu/ComfyUI_UltimateSDUpscale"
 )
 
+# Anima Preview3 workflow is UNET / diffusion_models based, not checkpoint based.
 CHECKPOINT_MODELS=(
-    "https://civitai.red/api/download/models/2883731?type=Model&format=SafeTensor&size=pruned&fp=fp16"
-    "https://civitai.com/api/download/models/2765355?type=Model&format=SafeTensor"
 )
 
-UNET_MODELS=(
+DIFFUSION_MODELS=(
     "https://huggingface.co/circlestone-labs/Anima/resolve/main/split_files/diffusion_models/anima-preview3-base.safetensors"
 )
 
 LORA_MODELS=(
+    "https://huggingface.co/circlestone-labs/Anima/resolve/main/turbo_lora/anima-turbo-lora.safetensors"
     "https://huggingface.co/tianweilin/DMD2/resolve/main/dmd2_sdxl_4step_lora.safetensors"
     "https://huggingface.co/hanzogak/Anima-Comradeship/resolve/main/LoRA/Cosmos-Predict2.5-2B-base-distilled-LoRA.safetensors"
     "https://huggingface.co/Kijai/Cosmos_Tokens/resolve/main/Cosmos-Predict2.5-2B-base-distilled-LoRA.safetensors"
@@ -62,7 +54,6 @@ TEXT_ENCODERS=(
 
 UPSCALE_MODELS=(
     "https://huggingface.co/fofr/comfyui/resolve/main/upscale_models/4x_foolhardy_Remacri.pth"
-    "https://huggingface.co/Kim2091/2x-AnimeSharpV4/resolve/main/2x-AnimeSharpV4_Fast_RCAN_PU.safetensors"
 )
 
 SAM_MODELS=(
@@ -72,7 +63,7 @@ SAM_MODELS=(
 ULTRALYTICS_BBOX_MODELS=(
     "https://huggingface.co/Bingsu/adetailer/resolve/main/face_yolov9c.pt"
     "https://huggingface.co/Bingsu/adetailer/resolve/main/hand_yolov9c.pt"
-    "https://huggingface.co/adbrasi/wanlotest/resolve/main/Eyeful_v2-Individual.pt"
+    "https://huggingface.co/Bryan32/Adetailer/resolve/main/Eyeful_v2-Individual.pt"
 )
 
 ULTRALYTICS_SEGM_MODELS=(
@@ -99,12 +90,12 @@ function provisioning_start() {
     provisioning_get_pip_packages
 
     provisioning_get_models \
-        "${WORKSPACE}/storage/stable_diffusion/models/ckpt" \
+        "${WORKSPACE}/storage/stable_diffusion/models/checkpoints" \
         "${CHECKPOINT_MODELS[@]}"
 
     provisioning_get_models \
-        "${WORKSPACE}/storage/stable_diffusion/models/unet" \
-        "${UNET_MODELS[@]}"
+        "${WORKSPACE}/storage/stable_diffusion/models/diffusion_models" \
+        "${DIFFUSION_MODELS[@]}"
 
     provisioning_get_models \
         "${WORKSPACE}/storage/stable_diffusion/models/lora" \
@@ -123,7 +114,7 @@ function provisioning_start() {
         "${TEXT_ENCODERS[@]}"
 
     provisioning_get_models \
-        "${WORKSPACE}/storage/stable_diffusion/models/esrgan" \
+        "${WORKSPACE}/storage/stable_diffusion/models/upscale_models" \
         "${UPSCALE_MODELS[@]}"
 
     provisioning_get_models \
@@ -225,51 +216,64 @@ function provisioning_get_models() {
 function provisioning_fix_filenames_and_paths() {
     printf "Fixing filenames and model paths...\n"
 
-    # Workflow expects: animaOfficial_preview3Base.safetensors
-    unet_dir="${WORKSPACE}/storage/stable_diffusion/models/unet"
-    if [[ -f "${unet_dir}/anima-preview3-base.safetensors" && ! -f "${unet_dir}/animaOfficial_preview3Base.safetensors" ]]; then
-        ln -s "${unet_dir}/anima-preview3-base.safetensors" "${unet_dir}/animaOfficial_preview3Base.safetensors"
-    fi
+    model_root="${WORKSPACE}/storage/stable_diffusion/models"
 
-    # Some ComfyUI nodes look for upscale models under upscale_models instead of esrgan.
-    esrgan_dir="${WORKSPACE}/storage/stable_diffusion/models/esrgan"
-    upscale_dir="${WORKSPACE}/storage/stable_diffusion/models/upscale_models"
-    mkdir -p "$upscale_dir"
+    diffusion_dir="${model_root}/diffusion_models"
+    lora_dir="${model_root}/lora"
+    vae_dir="${model_root}/vae"
+    text_encoder_dir="${model_root}/text_encoders"
+    upscale_dir="${model_root}/upscale_models"
+    sams_dir="${model_root}/sams"
+    ultralytics_dir="${model_root}/ultralytics"
+    checkpoints_dir="${model_root}/checkpoints"
 
-    if [[ -f "${esrgan_dir}/4x_foolhardy_Remacri.pth" && ! -f "${upscale_dir}/4x_foolhardy_Remacri.pth" ]]; then
-        ln -s "${esrgan_dir}/4x_foolhardy_Remacri.pth" "${upscale_dir}/4x_foolhardy_Remacri.pth"
-    fi
-
-    if [[ -f "${esrgan_dir}/2x-AnimeSharpV4_Fast_RCAN_PU.safetensors" && ! -f "${upscale_dir}/2x-AnimeSharpV4_Fast_RCAN_PU.safetensors" ]]; then
-        ln -s "${esrgan_dir}/2x-AnimeSharpV4_Fast_RCAN_PU.safetensors" "${upscale_dir}/2x-AnimeSharpV4_Fast_RCAN_PU.safetensors"
-    fi
-
-    # Also expose models directly under /opt/ComfyUI/models if the image does not symlink them automatically.
+    mkdir -p "$diffusion_dir" "$lora_dir" "$vae_dir" "$text_encoder_dir" "$upscale_dir" "$sams_dir" "$ultralytics_dir" "$checkpoints_dir"
     mkdir -p /opt/ComfyUI/models
 
-    for model_subdir in unet lora controlnet vae text_encoders sams ultralytics esrgan upscale_models ckpt; do
-        src="${WORKSPACE}/storage/stable_diffusion/models/${model_subdir}"
-        dst="/opt/ComfyUI/models/${model_subdir}"
+    # Workflow expects this filename:
+    # animaOfficial_preview3Base.safetensors
+    # Official HF filename:
+    # anima-preview3-base.safetensors
+    if [[ -f "${diffusion_dir}/anima-preview3-base.safetensors" && ! -e "${diffusion_dir}/animaOfficial_preview3Base.safetensors" ]]; then
+        ln -s "${diffusion_dir}/anima-preview3-base.safetensors" "${diffusion_dir}/animaOfficial_preview3Base.safetensors"
+    fi
 
-        if [[ -d "$src" && ! -e "$dst" ]]; then
+    # Some ComfyUI setups use "loras" instead of "lora".
+    if [[ ! -e "${model_root}/loras" ]]; then
+        ln -s "$lora_dir" "${model_root}/loras"
+    fi
+
+    # Expose models under /opt/ComfyUI/models as well.
+    declare -A MODEL_LINKS=(
+        ["checkpoints"]="$checkpoints_dir"
+        ["diffusion_models"]="$diffusion_dir"
+        ["unet"]="$diffusion_dir"
+        ["lora"]="$lora_dir"
+        ["loras"]="$lora_dir"
+        ["vae"]="$vae_dir"
+        ["text_encoders"]="$text_encoder_dir"
+        ["upscale_models"]="$upscale_dir"
+        ["sams"]="$sams_dir"
+        ["ultralytics"]="$ultralytics_dir"
+        ["controlnet"]="${model_root}/controlnet"
+    )
+
+    for dst_name in "${!MODEL_LINKS[@]}"; do
+        src="${MODEL_LINKS[$dst_name]}"
+        dst="/opt/ComfyUI/models/${dst_name}"
+
+        mkdir -p "$src"
+
+        if [[ ! -e "$dst" ]]; then
             ln -s "$src" "$dst"
         fi
     done
-
-    # ComfyUI commonly uses checkpoints/upscale_models names.
-    if [[ -d "${WORKSPACE}/storage/stable_diffusion/models/ckpt" && ! -e "/opt/ComfyUI/models/checkpoints" ]]; then
-        ln -s "${WORKSPACE}/storage/stable_diffusion/models/ckpt" "/opt/ComfyUI/models/checkpoints"
-    fi
-
-    if [[ -d "${WORKSPACE}/storage/stable_diffusion/models/esrgan" && ! -e "/opt/ComfyUI/models/upscale_models" ]]; then
-        ln -s "${WORKSPACE}/storage/stable_diffusion/models/esrgan" "/opt/ComfyUI/models/upscale_models"
-    fi
 }
 
 function provisioning_print_header() {
     printf "\n##############################################\n#                                            #\n#          Provisioning container            #\n#                                            #\n#         This will take some time           #\n#                                            #\n# Your container will be ready on completion #\n#                                            #\n##############################################\n\n"
 
-    if [[ $DISK_GB_ALLOCATED -lt $DISK_GB_REQUIRED ]]; then
+    if [[ -n "$DISK_GB_ALLOCATED" && -n "$DISK_GB_REQUIRED" && $DISK_GB_ALLOCATED -lt $DISK_GB_REQUIRED ]]; then
         printf "WARNING: Your allocated disk size (%sGB) is below the recommended %sGB - Some models may not be downloaded\n" "$DISK_GB_ALLOCATED" "$DISK_GB_REQUIRED"
     fi
 }
